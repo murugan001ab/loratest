@@ -1,5 +1,5 @@
 # main.py
-import uasyncio as asyncio
+import asyncio as asyncio
 import json
 import time
 from machine import Pin, SPI
@@ -22,28 +22,16 @@ busy = Pin(CONFIG["PIN_BUSY"], Pin.IN)
 dio1 = Pin(CONFIG["PIN_DIO1"], Pin.IN)
 
 # RF Switch Pins for Ebyte E22 (Overriding TX/RX pin functions)
-rxen = Pin(CONFIG["PIN_RXEN"], Pin.OUT, value=0)
-txen = Pin(CONFIG["PIN_TXEN"], Pin.OUT, value=0)
+
 
 radio = SX1262(spi, cs, reset, busy, dio1)
 
 async def blink_led(duration_ms: int = 200):
     """Blinks the onboard LED to indicate activity."""
     led.value(0) # LED On
-    await asyncio.sleep_ms(duration_ms)
+    await asyncio.sleep_ms(duration_ms) # type: ignore
     led.value(1) # LED Off
 
-def set_rf_mode(mode: str):
-    """Controls the Ebyte E22 RF switch hardware paths."""
-    if mode == "TX":
-        rxen.value(0)
-        txen.value(1)
-    elif mode == "RX":
-        txen.value(0)
-        rxen.value(1)
-    else: # IDLE
-        txen.value(0)
-        rxen.value(0)
 
 async def join_network() -> bool:
     """Attempts OTAA Join simulation with RF switch switching."""
@@ -53,17 +41,14 @@ async def join_network() -> bool:
     while not joined:
         await blink_led(100)
         log.info("Flipping RF switch to TX...")
-        set_rf_mode("TX")
         
         log.info("Sending Join Request...")
-        await asyncio.sleep_ms(150) # Simulate transmission time
+        await asyncio.sleep_ms(150) # type: ignore # Simulate transmission time
         
         log.info("Flipping RF switch to RX (Listening for Join Accept)...")
-        set_rf_mode("RX")
         
         await asyncio.sleep(5) # Wait for RX1 / RX2 window timeouts
         
-        set_rf_mode("IDLE")
         joined = True 
         log.info("Successfully joined ChirpStack network!")
         
@@ -84,15 +69,12 @@ async def uplink_task():
         payload = get_sensor_data()
         log.info(f"Preparing uplink: {payload}")
         
-        set_rf_mode("TX")
         await blink_led(50)
         
         log.info("TX complete. Opening RX windows...")
-        set_rf_mode("RX")
         
         await asyncio.sleep(2) # Open through both RX1 and RX2 timing delays
         
-        set_rf_mode("IDLE")
         log.info("RX windows closed. Entering sleep cycle.")
         
         await asyncio.sleep(CONFIG["TX_INTERVAL"])
@@ -114,8 +96,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        set_rf_mode("IDLE")
         log.info("Application stopped manually.")
     except Exception as e:
-        set_rf_mode("IDLE")
         log.error(f"Fatal Error: {e}")

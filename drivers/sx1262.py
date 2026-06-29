@@ -27,20 +27,20 @@ class SX1262:
         """Hardware reset of the SX1262."""
         self.log.info("Resetting transceiver...")
         self.reset_pin.value(0)
-        time.sleep_ms(10)
+        time.sleep_ms(10) # type: ignore
         self.reset_pin.value(1)
-        time.sleep_ms(20)
+        time.sleep_ms(20) # type: ignore
         self.wait_busy()
         self.log.info("Reset complete.")
 
     def wait_busy(self):
         """Wait until the BUSY pin goes low."""
-        timeout = time.ticks_add(time.ticks_ms(), 1000)
+        timeout = time.ticks_add(time.ticks_ms(), 1000) # type: ignore
         while self.busy_pin.value() == 1:
-            if time.ticks_diff(timeout, time.ticks_ms()) < 0:
+            if time.ticks_diff(timeout, time.ticks_ms()) < 0: # pyright: ignore[reportAttributeAccessIssue]
                 self.log.error("BUSY pin timeout!")
                 raise RuntimeError("SX1262 BUSY timeout")
-            time.sleep_ms(1)
+            time.sleep_ms(1) # pyright: ignore[reportAttributeAccessIssue]
 
     def write_command(self, op_code: int, data: bytes = b''):
         """Write a command to the transceiver."""
