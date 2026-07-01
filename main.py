@@ -13,16 +13,24 @@ log = Logger("MAIN")
 led = Pin(CONFIG["PIN_LED"], Pin.OUT)
 led.value(1) # Active-low on most ESP8266 boards (1 = Off)
 
-# ESP8266 Hardware SPI 1 maps to SCK(D5), MISO(D6), MOSI(D7)
-spi = SPI(1, baudrate=2000000, polarity=0, phase=0)
-
+spi = SPI(
+    2,
+    baudrate=1000000,
+    polarity=0,
+    phase=0,
+    bits=8,
+    firstbit=SPI.MSB,
+    sck=Pin(18),
+    mosi=Pin(23),
+    miso=Pin(19),
+)
 cs = Pin(CONFIG["PIN_CS"], Pin.OUT)
 reset = Pin(CONFIG["PIN_RESET"], Pin.OUT)
 busy = Pin(CONFIG["PIN_BUSY"], Pin.IN)
 dio1 = Pin(CONFIG["PIN_DIO1"], Pin.IN)
 
 # RF Switch Pins for Ebyte E22 (Overriding TX/RX pin functions)
-
+print("dio pin",dio1)
 
 radio = SX1262(spi, cs, reset, busy, dio1)
 
@@ -66,21 +74,27 @@ def get_sensor_data() -> str:
 async def uplink_task():
     """Handles the periodic 30-second uplink transmission loop."""
     while True:
-        payload = get_sensor_data()
-        log.info(f"Preparing uplink: {payload}")
-        
-        await blink_led(50)
-        
-        log.info("TX complete. Opening RX windows...")
-        
-        await asyncio.sleep(2) # Open through both RX1 and RX2 timing delays
-        
-        log.info("RX windows closed. Entering sleep cycle.")
+        payload = get_sensor_data().encode()
+
+        success = radio.transmit(
+            payload=payload,
+            freq_hz=865062500,
+            sf=7,
+            bw_hz=125000,
+            cr=1,
+            power_dbm=22,
+        )
+
+        if success:
+            log.info("Packet transmitted")
+        else:
+            log.error("Transmission failed")
         
         await asyncio.sleep(CONFIG["TX_INTERVAL"])
 
+
 async def main():
-    log.info("Booting ESP8266 Node...")
+    log.info("Booting ESP32 Node...")
     radio.init_lora()
     
     # Block until network connection status clears

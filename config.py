@@ -17,14 +17,14 @@ CONFIG = {
 
     # ---- Hardware Pins (ESP8266 NodeMCU) ----
     # NOTE: GPIO1 (TX) and GPIO3 (RX) are intentionally never used here.
-    "PIN_SCK":   14,  # D5 - HSPI SCK  (fixed by hardware SPI(1))
-    "PIN_MOSI":  13,  # D7 - HSPI MOSI (fixed by hardware SPI(1))
-    "PIN_MISO":  12,  # D6 - HSPI MISO (fixed by hardware SPI(1))
+    "PIN_SCK":   18,  # D5 - HSPI SCK  (fixed by hardware SPI(1))
+    "PIN_MOSI":  23,  # D7 - HSPI MOSI (fixed by hardware SPI(1))
+    "PIN_MISO":  19,  # D6 - HSPI MISO (fixed by hardware SPI(1))
     "PIN_CS":     5,  # D1 - NSS (software-controlled chip select)
-    "PIN_RESET":  4,  # D2 - RESET (active low)
-    "PIN_BUSY":  16,  # D0 - BUSY
-    "PIN_DIO1":  15,  # D8 - DIO1 (TX/RX-done IRQ)
-    "PIN_LED":    2,  # Onboard LED, active-low
+    "PIN_RESET":  27,  # D2 - RESET (active low)
+    "PIN_BUSY":  25,  
+    "PIN_DIO1":  26,  
+    "PIN_LED"  :2,
 
     # ---- LoRaWAN / Region Settings (IN865, ChirpStack) ----
     "REGION": "IN865",
