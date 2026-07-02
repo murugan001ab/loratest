@@ -25,6 +25,7 @@ class SX1262:
     CMD_SET_DIO3_AS_TCXO_CTRL = 0x97
     CMD_CALIBRATE = 0x89
     CMD_GET_STATUS = 0xC0
+    CMD_GET_RX_BUFFER_STATUS = 0x13
 
     # LoRa Sync Word register address (SX126x datasheet 13.4.1)
     REG_LORA_SYNC_WORD_MSB = 0x0740
@@ -57,6 +58,12 @@ class SX1262:
 
     # IRQ bit masks (SX126x datasheet 13.3.1)
     IRQ_TX_DONE = 0x0001
+    IRQ_RX_DONE = 0x0002
+    IRQ_PREAMBLE_DETECTED = 0x0004
+    IRQ_SYNC_WORD_VALID = 0x0008
+    IRQ_HEADER_VALID = 0x0010
+    IRQ_HEADER_ERR = 0x0020
+    IRQ_CRC_ERR = 0x0040
     IRQ_TIMEOUT = 0x0200
     IRQ_ALL = 0xFFFF
 
@@ -342,6 +349,37 @@ class SX1262:
         ])
         self.write_command(self.CMD_SET_TX, data)
 
+    def set_rx(self, timeout_ms: int = 0):
+        """
+        Start reception. timeout_ms=0 means a single receive with no radio
+        timeout (waits indefinitely for RxDone) -- callers should still
+        enforce their own wall-clock deadline while polling DIO1.
+        Timeout unit on the radio is 15.625us steps.
+        """
+        timeout_steps = int(timeout_ms * 1000 / 15.625) if timeout_ms else 0
+        data = bytes([
+            (timeout_steps >> 16) & 0xFF,
+            (timeout_steps >> 8) & 0xFF,
+            timeout_steps & 0xFF,
+        ])
+        self.write_command(self.CMD_SET_RX, data)
+
+    def get_rx_buffer_status(self):
+        """Returns (payload_length, rx_start_buffer_pointer)."""
+        raw = self.read_command(self.CMD_GET_RX_BUFFER_STATUS, 2)
+        return raw[0], raw[1]
+
+    def read_buffer(self, offset: int, length: int) -> bytes:
+        """Read `length` bytes out of the radio's RX FIFO starting at `offset`."""
+        self.wait_busy()
+        header = bytes([self.CMD_READ_BUFFER, offset, 0x00])
+        tx = header + bytes(length)
+        rx = bytearray(len(tx))
+        self.cs.value(0)
+        self.spi.write_readinto(tx, rx)
+        self.cs.value(1)
+        return bytes(rx[3:])
+
     # ------------------------------------------------------------------
     # High-level orchestration
     # ------------------------------------------------------------------
@@ -355,7 +393,7 @@ class SX1262:
         Blocks (polling DIO1) until TxDone or timeout. Returns True on success.
         """
         self.set_regulator_mode()
-        self.write_command(self.CMD_SET_STANDBY, b'\x00')
+        self.write_command(self.CMD_SET_STANDBY, b'\x01')
         self.write_command(self.CMD_SET_PACKET_TYPE, b'\x01')
         self.set_sync_word(public=True)
 
@@ -365,7 +403,7 @@ class SX1262:
         self.set_pa_config()
         self.set_tx_params(power_dbm)
 
-        self.set_buffer_base_address(0x00, 0x00)
+        self.set_buffer_base_address(0x00, 0xFF)
         self.write_buffer(payload)
 
         # Route TxDone + Timeout IRQs to DIO1 so we can poll it
@@ -404,3 +442,73 @@ class SX1262:
 
         self.log.error(f"TX finished with unexpected IRQ status: {status:#06x}")
         return False
+
+    def receive(self, freq_hz: int, sf: int, bw_hz: int, cr: int,
+                timeout_ms: int = 3000, max_payload_len: int = 64):
+        """
+        Open an RX window and wait up to timeout_ms for a downlink packet
+        (e.g. a Join-Accept). Returns the received payload bytes, or None
+        if the window closed without a valid packet (timeout, CRC error,
+        or header error).
+
+        Downlinks are IQ-inverted relative to uplinks -- invert_iq=1 here
+        matches what the gateway actually transmits; leaving this at 0
+        (the uplink default) means the radio will fail to demodulate a
+        Join-Accept even if timing and frequency are correct.
+        """
+        self.set_regulator_mode()
+        self.write_command(self.CMD_SET_STANDBY, b'\x00')
+        self.write_command(self.CMD_SET_PACKET_TYPE, b'\x01')
+        self.set_sync_word(public=True)
+
+        self.set_rf_frequency(freq_hz)
+        self.set_modulation_params(sf, bw_hz, cr)
+        # self.set_packet_params(payload_len=max_payload_len, invert_iq=0x01)
+        self.set_buffer_base_address(0x00, 0x00)
+
+        self.set_dio_irq_params(
+            irq_mask=self.IRQ_RX_DONE | self.IRQ_TIMEOUT | self.IRQ_CRC_ERR | self.IRQ_HEADER_ERR | self.IRQ_PREAMBLE_DETECTED,
+            dio1_mask=self.IRQ_RX_DONE | self.IRQ_TIMEOUT | self.IRQ_CRC_ERR | self.IRQ_HEADER_ERR,
+        )
+        self.clear_irq_status()
+
+        self.set_packet_params(
+            payload_len=max_payload_len,
+            invert_iq=0x01
+            )
+
+        self.log.info(f"Opening RX window ({timeout_ms}ms)...")
+        self.set_rx(timeout_ms)
+
+        deadline = time.ticks_add(time.ticks_ms(), timeout_ms + 500)
+        while self.dio1_pin.value() == 0:
+            if time.ticks_diff(deadline, time.ticks_ms()) < 0:
+                self.log.info("RX window closed: no DIO1 activity (nothing received).")
+                self.clear_irq_status()
+                return None
+            time.sleep_ms(20)
+
+        status = self.get_irq_status()
+        self.clear_irq_status()
+
+        if status & (self.IRQ_CRC_ERR | self.IRQ_HEADER_ERR):
+            self.log.error(f"RX failed: CRC/header error (IRQ={status:#06x}).")
+            return None
+        if not (status & self.IRQ_RX_DONE):
+            if status & self.IRQ_PREAMBLE_DETECTED:
+                # Radio saw RF energy shaped like a LoRa preamble but never
+                # locked sync/header -- points at a parameter mismatch
+                # (freq/SF/BW/IQ) rather than "nothing arrived".
+                self.log.info(f"RX timed out, but a preamble WAS detected (IRQ={status:#06x}) "
+                              f"-- signal is arriving, check SF/BW/IQ/sync-word match.")
+            else:
+                # No PreambleDetected bit at all -- the chip never saw
+                # anything resembling RF energy during the window.
+                self.log.info(f"RX window closed without RxDone (IRQ={status:#06x}), "
+                              f"no preamble ever detected -- likely nothing reached the antenna.")
+            return None
+
+        payload_len, start_ptr = self.get_rx_buffer_status()
+        data = self.read_buffer(start_ptr, payload_len)
+        self.log.info(f"Received {len(data)} bytes.")
+        return data

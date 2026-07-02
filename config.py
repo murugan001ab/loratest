@@ -36,7 +36,7 @@ CONFIG = {
         865985000,
     ],
     "RX2_FREQ_HZ": 866550000,
-    "RX2_DR": 10,              # IN865 RX2 default: DR10 = SF7/BW125 in ChirpStack's table mapping below
+    "RX2_DR": 2,              # IN865 RX2 default: DR10 = SF7/BW125 in ChirpStack's table mapping below
 
     # Datarate table for IN865 (index -> (SF, BW_Hz))
     "DR_TABLE": {
@@ -54,8 +54,8 @@ CONFIG = {
     "CODING_RATE": 1,          # SX1262 LoRaWAN value: 1 = 4/5
     "SYNC_WORD_PUBLIC": True,  # LoRaWAN public network sync word (0x3444)
 
-    "RX1_DELAY_MS": 1000,      # JoinAccept/Class A RX1 delay
-    "RX2_DELAY_MS": 2000,
+    "RX1_DELAY_MS": 5000,
+    "RX2_DELAY_MS": 6000,
     "JOIN_ACCEPT_DELAY1_MS": 5000,
     "JOIN_ACCEPT_DELAY2_MS": 6000,
 
